@@ -56,16 +56,13 @@
         </div>
 		
 		<div class="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-200 flex p-2 z-40">
-			<button @click="activeTab = 'list'" :class="['flex-1 py-2 rounded-lg font-bold text-sm', activeTab === 'list' ? 'bg-emerald-600 text-white' : 'text-slate-500']">
+			<button @click="activeTab = 'list'" :class="['flex-1 py-2 rounded-lg font-bold text-lg', activeTab === 'list' ? 'bg-emerald-600 text-white' : 'text-slate-500']">
 				📋 任務清單
 			</button>
-			<button @click="activeTab = 'calendar'" :class="['flex-1 py-2 rounded-lg font-bold text-sm', activeTab === 'calendar' ? 'bg-emerald-600 text-white' : 'text-slate-500']">
+			<button @click="activeTab = 'calendar'" :class="['flex-1 py-2 rounded-lg font-bold text-lg', activeTab === 'calendar' ? 'bg-emerald-600 text-white' : 'text-slate-500']">
 				📅 日曆檢視
 			</button>
 		</div>
-
-
-
 
         <div v-else class="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-20 md:pb-0">
             
