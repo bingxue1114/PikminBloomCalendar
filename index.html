@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>皮克敏活動任務推算行事曆 (功能與同步完美修復版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+    <div id="app" class="container mx-auto px-4 py-8 max-w-7xl">
+        
+        <header class="mb-8 text-center md:text-left flex flex-col md:flex-row justify-between items-center border-b border-slate-200 pb-4">
+            <div>
+                <h1 class="text-3xl font-extrabold text-emerald-600 flex items-center gap-2">
+                    🌱 皮克敏雲端排程助手
+                </h1>
+                <p class="text-slate-500 mt-1">手動批次同步 ｜ 智慧輪次隱藏 ｜ 隨機輪次色彩</p>
+            </div>
+            
+            <div class="mt-4 md:mt-0 flex flex-wrap items-center justify-center md:justify-end gap-3 bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                <div class="flex items-center gap-1">
+                    <label class="block text-xs font-bold text-slate-400 uppercase">月份</label>
+                    <input type="month" v-model="currentMonth" @change="calculateSchedule" class="rounded-md border-slate-200 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1">
+                </div>
+
+                <button v-if="gasApiUrl" @click="syncDataManually" :disabled="syncing"
+                        class="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold py-1.5 px-4 rounded-lg text-sm transition-colors shadow-sm">
+                    <span v-if="syncing" class="inline-block animate-spin rounded-full h-3 w-3 border-2 border-white border-t-transparent mr-1"></span>
+                    🔄 {{ syncing ? '正在同步中...' : '同步至雲端' }}
+                </button>
+
+                <div class="border-l border-slate-200 h-6 hidden md:block"></div>
+
+                <div class="text-xs text-slate-400 font-medium">
+                    🔄 雲端狀態：<span :class="syncStatusColor">{{ lastUpdateTime }}</span>
+                </div>
+
+                <button @click="showSettings = true" class="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-1.5 px-3 rounded-lg text-sm transition-colors border border-slate-200">
+                    ⚙️ API
+                </button>
+            </div>
+        </header>
+
+        <div v-if="!gasApiUrl" class="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center my-8">
+            <h3 class="text-amber-800 font-bold text-lg mb-2">👋 請先設定您的 Google GAS API 連線</h3>
+            <button @click="showSettings = true" class="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded-xl shadow transition-colors">
+                立即設定 API 網址
+            </button>
+        </div>
+
+        <div v-else-if="loading" class="text-center py-12">
+            <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-emerald-500 border-t-transparent mb-4"></div>
+            <p class="text-slate-500 font-medium">正在載入雲端資料庫進度...</p>
+        </div>
+		
+		<div class="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-200 flex p-2 z-40">
+			<button @click="activeTab = 'list'" :class="['flex-1 py-2 rounded-lg font-bold text-sm', activeTab === 'list' ? 'bg-emerald-600 text-white' : 'text-slate-500']">
+				📋 任務清單
+			</button>
+			<button @click="activeTab = 'calendar'" :class="['flex-1 py-2 rounded-lg font-bold text-sm', activeTab === 'calendar' ? 'bg-emerald-600 text-white' : 'text-slate-500']">
+				📅 日曆檢視
+			</button>
+		</div>
+
+
+
+
+        <div v-else class="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-20 md:pb-0">
+            
+            <div :class="['lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-[calc(100vh-200px)] overflow-y-auto', activeTab === 'list' ? 'block' : 'hidden md:block']">
+                
+                <div class="sticky top-0 bg-white pb-3 z-10 border-b border-slate-100 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-xl font-bold text-slate-700">📋 任務排程進度</h2>
+                        <span class="bg-slate-100 text-slate-600 text-xs font-bold px-2.5 py-0.5 rounded-full">
+                            共 {{ filteredTasks.length }} 關
+                        </span>
+                    </div>
+                    
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs font-bold text-slate-500 whitespace-nowrap">輪次查詢：</label>
+                        <select v-model="selectedLoopFilter" @change="calculateSchedule" 
+                                class="w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-xs py-1">
+                            <option value="active_only">🌱 進行中輪次 (自動隱藏已完成輪)</option>
+                            <option value="all">👁️ 顯示全部輪次</option>
+                            <option v-for="l in availableLoops" :key="'opt-'+l" :value="l">
+                                第 {{ l }} 輪
+                            </option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="space-y-4 mt-4">
+                    <div v-if="filteredTasks.length === 0" class="text-center py-8 text-slate-400 text-sm">
+                        此輪次沒有任務或已被完全過濾
+                    </div>
+                    
+                    <div v-for="task in filteredTasks" :key="task.id" 
+                         :class="['p-4 rounded-xl border transition-all', task.completed ? 'bg-slate-50 border-slate-200 opacity-60' : 'bg-white shadow-sm border-slate-100 hover:border-slate-300']"
+                         :style="!task.completed ? { borderLeft: `4px solid ${getLoopColor(task.loop)}` } : {}">
+                        
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="flex items-center h-5">
+                                <input type="checkbox"
+                                       :checked="task.completed"
+                                       @click="toggleTask(task)"
+                                       class="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer">
+                            </div>
+                            <div class="flex-1 ml-2">
+                                <div class="flex items-center gap-1 mb-1">
+                                    <span class="text-[10px] font-extrabold text-white px-1.5 py-0.5 rounded shadow-sm"
+                                          :style="{ backgroundColor: getLoopColor(task.loop) }">
+                                        第 {{ task.loop }} 輪
+                                    </span>
+                                    <span class="text-xs font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{{ task.stage }}</span>
+                                </div>
+                                <span :class="['font-semibold text-sm inline', task.completed ? 'line-through text-slate-400' : 'text-slate-700']">
+                                    {{ task.name }}
+                                </span>
+                                <div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                                    <span v-if="task.mushroomCount > 0" class="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">
+                                        🍄 菇: {{ task.mushroomCount }} 次
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div v-if="task.completed" class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                            <span class="text-slate-500 font-medium">實際完成日：</span>
+                            <input type="date" v-model="task.actualDate" @change="calculateSchedule" 
+                                   class="rounded-md border-slate-200 py-0.5 px-2 text-slate-700 text-xs">
+                        </div>
+                        <div v-else class="mt-2 text-xs text-right">
+                            <span class="text-slate-400 block text-[11px] mb-1 text-left" v-if="task.detailNotes">{{ task.detailNotes }}</span>
+                            <span class="text-emerald-600 font-bold">⏳ 預計：{{ task.estimatedDate || '計算中...' }}</span>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <div :class="['lg:col-span-2 flex flex-col', activeTab === 'calendar' ? 'block' : 'hidden md:block']">
+                <div class="grid grid-cols-7 gap-2 mb-2 text-center text-sm font-bold text-slate-500">
+                    <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
+                </div>
+
+                <div class="grid grid-cols-7 gap-2 flex-1">
+                    <div v-for="blank in calendarBlanks" :key="'blank-'+blank" class="bg-slate-100/50 rounded-xl min-h-[120px]"></div>
+
+                    <div v-for="day in calendarDays" :key="day.dateStr" 
+					     @click="selectedDayData = day"
+                         :class="['bg-white p-2 rounded-xl border flex flex-col justify-between min-h-[120px] shadow-sm transition-all', 
+                                  day.isToday ? 'border-emerald-500 ring-2 ring-emerald-500/20' : 'border-slate-100']">
+                        
+                        <div class="flex justify-between items-center">
+                            <span :class="['text-sm font-bold', day.isToday ? 'bg-emerald-500 text-white rounded-full w-6 h-6 flex items-center justify-center' : 'text-slate-600']">
+                                {{ day.dayNum }}
+                            </span>
+                            <span v-if="day.mushroomsUsed > 0" class="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1 rounded">
+                                🍄 {{ day.mushroomsUsed }}/3
+                            </span>
+                        </div>
+
+                        <div class="mt-2 space-y-1 overflow-y-auto flex-1 max-h-[90px]">
+                            <div v-for="t in day.tasks" :key="t.id"
+                                 :class="['text-[11px] p-1 rounded truncate font-medium border-l-2 text-slate-700']"
+                                 :style="t.completed ? { backgroundColor: '#f1f5f9', color: '#94a3b8', textDecoration: 'line-through', borderLeftColor: '#cbd5e1' } : { backgroundColor: getLoopColor(t.loop) + '15', borderLeftColor: getLoopColor(t.loop) }"
+                                 :title="'[L'+t.loop+' '+t.stage+'] '+t.name">
+                                {{ t.completed ? '✓ ' : '' }}{{ t.loop > 1 ? 'L'+t.loop+'-' : '' }}{{ t.name }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div v-if="showSettings" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 border border-slate-100">
+                <div class="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
+                    <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">⚙️ Google GAS 連線設定</h3>
+                    <button @click="showSettings = false" class="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Google Apps Script 網頁應用程式網址</label>
+                        <input type="text" v-model="inputApiUrl" placeholder="https://script.google.com/macros/s/.../exec" 
+                               class="w-full rounded-lg border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm p-2.5 border">
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 mt-6 border-t border-slate-100 pt-4">
+                    <button @click="showSettings = false" class="px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 rounded-xl">取消</button>
+                    <button @click="saveApiUrl" class="px-4 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow">儲存並同步資料</button>
+                </div>
+            </div>
+        </div>
+		
+		<div v-if="selectedDayData" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+			<div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 border border-slate-100 max-h-[80vh] overflow-y-auto">
+				<div class="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
+					<h3 class="text-lg font-bold text-slate-800">📅 {{ selectedDayData.dateStr }} 任務</h3>
+					<button @click="selectedDayData = null" class="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+				</div>
+				
+				<div v-if="selectedDayData.tasks.length === 0" class="text-slate-400 text-center py-4">本日無排程任務</div>
+				
+				<div v-else class="space-y-3">
+					<div v-for="t in selectedDayData.tasks" :key="t.id" class="p-3 rounded-xl border border-slate-100 bg-slate-50">
+						<div class="flex items-center gap-2 mb-1">
+							<span class="text-[10px] font-bold text-white px-1.5 py-0.5 rounded" :style="{ backgroundColor: getLoopColor(t.loop) }">L{{ t.loop }}</span>
+							<span class="text-xs font-bold text-slate-600">{{ t.stage }}</span>
+						</div>
+						<div class="text-sm font-bold text-slate-700">{{ t.name }}</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const today = new Date();
+                const defaultMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+                
+                const currentMonth = ref(defaultMonth);
+                const rawSheetTasks = ref([]);    
+                const filteredTasks = ref([]);    
+                
+                const loading = ref(false);
+                const syncing = ref(false);       
+                const lastUpdateTime = ref("尚未連線");
+                const syncStatusColor = ref("text-slate-400");
+                
+                const gasApiUrl = ref("");      
+                const inputApiUrl = ref("");    
+                const showSettings = ref(false); 
+
+                const calendarBlanks = ref(0);
+                const calendarDays = ref([]);
+
+                const selectedLoopFilter = ref("active_only"); 
+                const availableLoops = ref([]);
+
+                const loopColors = ref({});
+                const colorPalette = [
+                    '#4f46e5', '#9333ea', '#c026d3', '#db2777', '#e11d48', 
+                    '#ea580c', '#d97706', '#059669', '#0d9488', '#2563eb'
+                ];
+
+                const getLoopColor = (loopNum) => {
+                    if (!loopColors.value[loopNum]) {
+                        const idx = (loopNum - 1) % colorPalette.length;
+                        loopColors.value[loopNum] = colorPalette[idx];
+                    }
+                    return loopColors.value[loopNum];
+                };
+
+                const loadSavedApiUrl = () => {
+                    const savedUrl = localStorage.getItem("pikmin_gas_api_url");
+                    if (savedUrl) {
+                        gasApiUrl.value = savedUrl;
+                        inputApiUrl.value = savedUrl;
+                        fetchTasksFromSheet(); 
+                    } else {
+                        showSettings.value = true; 
+                    }
+                };
+
+                const saveApiUrl = () => {
+                    if (!inputApiUrl.value.trim()) return;
+                    gasApiUrl.value = inputApiUrl.value.trim();
+                    localStorage.setItem("pikmin_gas_api_url", gasApiUrl.value);
+                    showSettings.value = false;
+                    fetchTasksFromSheet(); 
+                };
+
+                const fetchTasksFromSheet = async () => {
+                    if (!gasApiUrl.value) return;
+                    try {
+                        loading.value = true;
+                        const response = await fetch(gasApiUrl.value);
+                        const data = await response.json();
+                        if (data.error) throw new Error(data.error);
+                        
+                        rawSheetTasks.value = data.map(t => ({
+                            ...t,
+                            id: parseInt(t.id, 10),
+                            completed: t.completed === true || t.completed === 'true',
+                            localChanged: false 
+                        }));
+                        
+                        updateStatusTime("同步成功");
+                        calculateSchedule();
+                    } catch (error) {
+                        console.error(error);
+                        updateStatusTime("同步失敗");
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                // 手動按鈕批次寫入雲端
+                const syncDataManually = async () => {
+                    if (!gasApiUrl.value || syncing.value) return;
+                    
+                    try {
+                        syncing.value = true;
+                        syncStatusColor.value = "text-amber-500 animate-pulse";
+                        lastUpdateTime.value = "雲端同步中...";
+
+                        // 準確抓出本地被動過勾選的所有資料
+                        const changedTasks = rawSheetTasks.value.filter(t => t.localChanged);
+                        
+                        for (const task of changedTasks) {
+                            const cleanStage = task.stage.toString().replace(/[\r\n]/g, ' ').trim();
+                            const cleanName = task.name.toString().replace(/[\r\n]/g, ' ').trim();
+
+                            await fetch(gasApiUrl.value, {
+                                method: "POST",
+                                mode: "no-cors", 
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    id: task.id, 
+                                    completed: task.completed,
+                                    actualDate: task.actualDate || "",
+                                    name: cleanName,
+                                    stage: cleanStage
+                                })
+                            });
+                            task.localChanged = false; 
+                        }
+
+                        // 同步後重新拉取最新狀態，確保資料同步完畢
+                        const response = await fetch(gasApiUrl.value);
+                        const data = await response.json();
+                        if (!data.error) {
+                            rawSheetTasks.value = data.map(t => ({
+                                ...t,
+                                id: parseInt(t.id, 10),
+                                completed: t.completed === true || t.completed === 'true',
+                                localChanged: false
+                            }));
+                        }
+                        updateStatusTime("雲端同步成功");
+                        calculateSchedule();
+
+                    } catch (error) {
+                        console.error(error);
+                        updateStatusTime("同步失敗");
+                    } finally {
+                        syncing.value = false;
+                    }
+                };
+
+                // 🎯 修正點：當狀態隨著 v-model 改變時，準確補上實際日期並記錄更動標記
+                const toggleTask = (task) => {
+
+                    const rawTask = rawSheetTasks.value.find(
+                        t => Number(t.id) === Number(task.id)
+                    );
+
+                    if (!rawTask) {
+                        console.error("找不到任務:", task.id);
+                        return;
+                    }
+
+                    rawTask.completed = !rawTask.completed;
+                    rawTask.localChanged = true;
+
+                    if (rawTask.completed) {
+                        if (!rawTask.actualDate) {
+                            rawTask.actualDate = new Date().toISOString().split('T')[0];
+                        }
+                    } else {
+                        rawTask.actualDate = "";
+                    }
+
+                    updateStatusTime("本地有未同步的修改");
+                    calculateSchedule();
+                };
+
+                const updateStatusTime = (statusText) => {
+                    const now = new Date();
+                    const timeStr = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+                    
+                    if (statusText === "同步成功" || statusText === "雲端同步成功") {
+                        syncStatusColor.value = "text-emerald-600 font-bold";
+                        lastUpdateTime.value = `${timeStr} (${statusText})`;
+                    } else if (statusText === "本地有未同步的修改") {
+                        syncStatusColor.value = "text-blue-500 font-bold animate-pulse";
+                        lastUpdateTime.value = "⚠️ 請點擊按鈕同步至雲端";
+                    } else {
+                        syncStatusColor.value = "text-red-500 font-bold";
+                        lastUpdateTime.value = `${timeStr} (錯誤)`;
+                    }
+                };
+
+                const calculateSchedule = () => {
+                    if (rawSheetTasks.value.length === 0) return;
+
+                    const [year, month] = currentMonth.value.split('-').map(Number);
+                    const mushroomRegistry = {}; 
+                    let cursorDate = new Date(year, month - 1, 1); 
+                    const todayStr = new Date().toISOString().split('T')[0];
+
+                    // 自動識別每一輪的總基準關卡數
+                    let totalBaseTasks = rawSheetTasks.value.length;
+                    for (let i = 1; i < rawSheetTasks.value.length; i++) {
+                        if (rawSheetTasks.value[i].stage === rawSheetTasks.value[0].stage && 
+                            rawSheetTasks.value[i].name === rawSheetTasks.value[0].name) {
+                            totalBaseTasks = i; 
+                            break;
+                        }
+                    }
+
+                    const loopsSet = new Set();
+                    let activeLoopNum = 1; 
+                    let activeLoopFound = false;
+
+                    let allProcessedTasks = rawSheetTasks.value.map((t, idx) => {
+                        const loopNumber = Math.floor(idx / totalBaseTasks) + 1;
+                        loopsSet.add(loopNumber);
+                        
+                        if (!t.completed && !activeLoopFound) {
+                            activeLoopNum = loopNumber;
+                            activeLoopFound = true;
+                        }
+
+                        return {
+                            ...t,
+                            loop: loopNumber  
+                        };
+                    });
+
+                    availableLoops.value = Array.from(loopsSet).sort((a,b) => a - b);
+
+                    // 蘑菇及排程推算
+                    allProcessedTasks.forEach(task => {
+                        if (task.completed) {
+                            if (!task.actualDate) task.actualDate = todayStr;
+                            task.estimatedDate = task.actualDate;
+                            task.detailNotes = '';
+                            
+                            if (task.mushroomCount > 0) {
+                                mushroomRegistry[task.actualDate] = (mushroomRegistry[task.actualDate] || 0) + task.mushroomCount;
+                            }
+                            
+                            const actualD = new Date(task.actualDate);
+                            if (actualD >= cursorDate) {
+                                cursorDate = new Date(actualD); 
+                            }
+                        }
+                    });
+
+                    allProcessedTasks.forEach(task => {
+                        if (!task.completed) {
+                            if (task.mushroomCount === 0) {
+                                task.estimatedDate = formatDate(cursorDate);
+                                task.detailNotes = '';
+                            } else {
+                                let remainingMushroomsNeeded = task.mushroomCount;
+                                let notesArray = [];
+
+                                while (remainingMushroomsNeeded > 0) {
+                                    const dateStr = formatDate(cursorDate);
+                                    const currentUsed = mushroomRegistry[dateStr] || 0;
+                                    const availableToday = Math.max(0, 3 - currentUsed);
+
+                                    if (availableToday > 0) {
+                                        if (remainingMushroomsNeeded <= availableToday) {
+                                            mushroomRegistry[dateStr] = currentUsed + remainingMushroomsNeeded;
+                                            const left = 3 - mushroomRegistry[dateStr];
+                                            notesArray.push(`${dateStr.substring(5).replace('-','/')}剩餘${left}次`);
+                                            
+                                            remainingMushroomsNeeded = 0;
+                                            task.estimatedDate = dateStr;
+                                            
+                                            if (left === 0) {
+                                                cursorDate.setDate(cursorDate.getDate() + 1);
+                                            }
+                                        } else {
+                                            mushroomRegistry[dateStr] = 3;
+                                            notesArray.push(`${dateStr.substring(5).replace('-','/')}剩餘0次`);
+                                            remainingMushroomsNeeded -= availableToday;
+                                            cursorDate.setDate(cursorDate.getDate() + 1);
+                                        }
+                                    } else {
+                                        cursorDate.setDate(cursorDate.getDate() + 1);
+                                    }
+                                }
+                                task.detailNotes = notesArray.join(' | ');
+                            }
+                        }
+                    });
+
+                    // 智慧過濾左邊清單
+                    if (selectedLoopFilter.value === "active_only") {
+                        filteredTasks.value = allProcessedTasks.filter(t => t.loop >= activeLoopNum);
+                    } else if (selectedLoopFilter.value === "all") {
+                        filteredTasks.value = allProcessedTasks;
+                    } else {
+                        const targetLoop = parseInt(selectedLoopFilter.value, 10);
+                        filteredTasks.value = allProcessedTasks.filter(t => t.loop === targetLoop);
+                    }
+
+                    renderCalendar(allProcessedTasks, mushroomRegistry);
+                };
+
+                const formatDate = (date) => {
+                    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+                };
+
+                const renderCalendar = (allTasks, mushroomRegistry) => {
+                    const [year, month] = currentMonth.value.split('-').map(Number);
+                    const firstDayOfMonth = new Date(year, month - 1, 1);
+                    calendarBlanks.value = firstDayOfMonth.getDay();
+
+                    const totalDays = new Date(year, month, 0).getDate();
+                    const todayStr = formatDate(new Date());
+
+                    const daysArray = [];
+                    for (let i = 1; i <= totalDays; i++) {
+                        const currentLoopDate = new Date(year, month - 1, i);
+                        const dateStr = formatDate(currentLoopDate);
+                        const dayTasks = allTasks.filter(t => t.estimatedDate === dateStr);
+
+                        daysArray.push({
+                            dayNum: i,
+                            dateStr: dateStr,
+                            isToday: dateStr === todayStr,
+                            mushroomsUsed: mushroomRegistry[dateStr] || 0,
+                            tasks: dayTasks
+                        });
+                    }
+                    calendarDays.value = daysArray;
+                };
+				
+				// 在 setup 內新增
+				const activeTab = ref('list'); // 預設顯示任務清單
+
+				// 若你想在螢幕變大時自動重置頁籤狀態，可以加入 resize 監聽 (選用)
+				onMounted(() => {
+					loadSavedApiUrl();
+					window.addEventListener('resize', () => {
+						if (window.innerWidth >= 768) activeTab.value = 'list';
+					});
+				});
+				
+				const selectedDayData = ref(null);
+
+                onMounted(() => {
+                    loadSavedApiUrl();
+                });
+
+                return {
+                    currentMonth,
+                    filteredTasks,
+                    loading,
+                    syncing,
+                    lastUpdateTime,
+                    syncStatusColor,
+                    gasApiUrl,
+                    inputApiUrl,
+                    showSettings,
+                    calendarBlanks,
+                    calendarDays,
+                    selectedLoopFilter,
+                    availableLoops,
+                    saveApiUrl,
+                    toggleTask,
+                    syncDataManually,
+                    calculateSchedule,
+                    getLoopColor,
+					activeTab, // 記得加到這裡
+					selectedDayData
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
